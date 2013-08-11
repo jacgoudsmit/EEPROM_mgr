@@ -135,8 +135,8 @@ public:
   //------------------------------------------------------------------------
   // Pure virtual function that provides a pointer to the RAM data
   // that's associated with this item
-public:  
-  virtual void *Data() const = 0;
+public:
+  virtual void *Data() = 0;
   
 
   //------------------------------------------------------------------------
@@ -152,7 +152,7 @@ public:
     eeprom_read_block(Data(), (const void *)m_addr, m_size);
   }
   
-  bool Verify() const
+  bool Verify()
   {
     bool result = true;
     const byte *p = (const byte *)Data();
@@ -175,19 +175,19 @@ public:
   // EEPROM operations for all items
   // These should be called as EEPROM_mgr::functionname();
 public:
-  static void RetrieveAll()
-  {
-    for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
-    {
-      cur->Retrieve();
-    }
-  }
-  
   static void StoreAll()
   {
     for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
     {
       cur->Store();
+    }
+  }
+  
+  static void RetrieveAll()
+  {
+    for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
+    {
+      cur->Retrieve();
     }
   }
   
@@ -218,11 +218,13 @@ public:
 // values with a sketch that has the items declared in one way, and 
 // retrieve them in a sketch that has the declarations in a different
 // order or uses different variable types.
-template <class T> class EEPROM_item : EEPROM_mgr
+template <class T> class EEPROM_item : public EEPROM_mgr
 {
+  // The member that stores the actual data
 protected:
   T m_data;
-  
+
+  // Constructor/Destructor
 public:
   EEPROM_item()
   : EEPROM_mgr(sizeof(T))
@@ -235,12 +237,16 @@ public:
   , m_data(defaultvalue)
   {
   }
-  
-  virtual void *Data() const
+
+  // Virtual function that provides access to the data
+public:
+  virtual void *Data()
   {
     return &m_data;
   }
-  
+
+  // Functions for read and write access in the program
+public:
   operator const T&()
   {
     return m_data;
