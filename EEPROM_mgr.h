@@ -247,7 +247,7 @@ public:
 
   // Functions for read and write access in the program
 public:
-  operator const T&()
+  operator T&()
   {
     return m_data;
   }
