@@ -24,114 +24,83 @@
   RetrieveAll function) or to store all the default values in the EEPROM
   (using StoreAll). 
   
-  In most cases, your sketch should retrieve all the stored values from the
-  EEPROM, but the first time you do this (when the EEPROM isn't initialized
-  yet), calling RetrieveAll will override your defaults with values that are
-  probably invalid or useless. Here are some suggestions to handle this:
+  In most cases, your sketch should start by calling the static Begin
+  function to retrieve values from the EEPROM. The library generates a
+  signature value in order to make sure (to some extent) that the data is
+  valid.
   
-  1. You can temporarily modify the sketch to call StoreAll at the beginning
-  of your sketch, and run this version once, before modifying it back and
-  downloading it.
-  
-  2. You can write a separate sketch to store the default values. You can
-  combine this with other functionality, e.g. a sketch to calibrate servo
-  values could modify the values until they're just right, and then store
-  them. Make sure that all declarations of items use the same types and
-  are declared in the same order. Declarations may be spread across
-  multiple modules and libraries but all the #includes should be in the
-  same order in all modules to prevent EEPROM locations from changing
-  between sketches.
-  
-  3. You can test an input at the beginning of execution, and if it has a
-  certain value, you can store the defaults instead of retrieving the values
-  from EEPROM. This way, for example, you can instruct the user to hold a
-  pin low or keep a button pressed to return the settings to their defaults.
-  
-  4. Declare a byte item and use it to indicate whether the EEPROM has been
-  initialized: at the beginning of your sketch, call Retrieve on the byte
-  item and check if the value is 255 afterwards. If it is, set the byte
-  to a different value (e.g. 0) and call StoreAll() to store all the values,
-  otherwise call RetrieveAll (and optionally do a sanity check to make
-  sure that what's in the EEPROM makes sense). You can store 255 in the
-  byte and reset the Arduino to revert the settings to the defaults.
-  
-    
-  The library doesn't attempt to do any wear-levelling. I started adding
-  code to do this but it got so complicated that it took up much more 
-  space than I wanted to use. Maybe in the future I'll write an advanced
-  version that does wear-levelling but for my application it just wasn't
-  enough of a concern. Even if the EEPROM fails, the cost to replace the
-  entire chip is minimal. The library doesn't attempt to detect EEPROM
-  failures but if your sketch needs this, it can call the Verify or
-  VerifyAll function to make sure that what's in the items, is what's in the
-  EEPROM. Obviously this probably is NOT the case right after startup, 
-  because at that time, the defaults are loaded, not the values from the
-  EEPROM.
+  The library does some minimal wear-prevention by trying not to overwrite
+  values if the EEPROM doesn't need to be changed, but it doesn't do any
+  real wear-leveling. I started adding it but it got so complicated that
+  it took up much more space than I wanted to use. Maybe in the future I'll
+  write an specialized advanced version that does wear-leveling but for
+  most needs it just isn't enough of a concern. Even if the EEPROM fails,
+  the cost to replace the entire chip is minimal.
+
+  The library doesn't attempt to detect EEPROM failures but if your sketch
+  needs this, it can call the Verify or VerifyAll function to make sure
+  that the EEPROM contains the same data as the items, after they are
+  supposed to be written.
 */
 
+
+#include <arduino.h>
 #include <avr/eeprom.h>
+
+
+//--------------------------------------------------------------------------
+// Implementation for the "missing" EEPROM function
+bool                                    // Returns true if all data matches
+eeprom_verify_block(
+  const void *ram_data,                 // Pointer to RAM data
+  void *eeprom_data,                    // Pointer to EEPROM data
+  size_t size);                         // Number of bytes to compare
 
 
 ////////////////////////////////////////////////////////////////////////////
 // Base class for EEPROM items
+////////////////////////////////////////////////////////////////////////////
 //
 // It's not possible to create instances of this class, it's only needed for
-// the basic functionality and the static members and functions.
+// the basic functionality and the static members and functions. Use the
+// template class below to create items that are stored in the EEPROM.
 class EEPROM_mgr
 {
   //------------------------------------------------------------------------
   // Static variables
 protected:
-  static word nextaddr;
-  static EEPROM_mgr *list;
+  static word       nextaddr;           // Next address in EEPROM
+  static EEPROM_mgr *list;              // List of items with nonzero size
+  static word       signature;          // non-zero=list is finalized
 
   
   //------------------------------------------------------------------------
   // Member variables
 protected:
-  EEPROM_mgr *m_next;
-  word m_addr;
-  size_t m_size;
+  EEPROM_mgr       *m_next;             // Next link in linked list
+  word              m_addr;             // NOTE: 0 is valid EEPROM address!
+  size_t            m_size;             // Size of data; 0=don't use EEPROM
 
   
   //------------------------------------------------------------------------
-  // Constructor/Destructor
+  // Constructor
 public:
-  EEPROM_mgr(size_t size)
-  : m_addr(nextaddr)
-  , m_size(size)
-  {
-    nextaddr += size;
-    
-    m_next = list;
-    list = this;
-  }
+  EEPROM_mgr(
+    size_t size);                       // Size for data required by item
   
-  virtual ~EEPROM_mgr()
-  {
-    // Normally this should never be called but this code will clean
-    // everything up nicely.
-    
-    // If we're at the top of the list, removing is trivial
-    // Otherwise, we need to find our predecessor.
-    if (list == this)
-    {
-      list = m_next;
-    }
-    else
-    {
-      for (EEPROM_mgr *cur = list; cur->m_next; cur = cur->m_next)
-      {
-        if (cur->m_next == this)
-        {
-          cur->m_next = m_next;
-          break;
-        }
-      }
-    }
-  }
 
+  //------------------------------------------------------------------------
+  // Destructor
+public:
+  virtual ~EEPROM_mgr();
 
+  
+  //------------------------------------------------------------------------
+  // Prevent creation on the heap by declaring the new operator as protected
+protected:
+  void *operator new(size_t);
+  
+  
   //------------------------------------------------------------------------
   // Pure virtual function that provides a pointer to the RAM data
   // that's associated with this item
@@ -140,64 +109,154 @@ public:
   
 
   //------------------------------------------------------------------------
-  // EEPROM operations per item
+  // Store the item into the EEPROM
+  //
+  // Protected because there's no check if the list is finalized
+protected:
+  void _Store()
+  {
+    if (m_size)
+    {
+      eeprom_write_block(Data(), (void *)m_addr, m_size); 
+    }
+  }
+  
+  
+  //------------------------------------------------------------------------
+  // Store after checking signature
 public:
   void Store()
   {
-    eeprom_write_block(Data(), (void *)m_addr, m_size); 
+    if (signature)
+    {
+      _Store();
+    }
   }
   
+  
+  //------------------------------------------------------------------------
+  // Retrieve the item from the EEPROM
+  //
+  // Protected because there's no check if the list is finalized
+protected:
+  void _Retrieve()
+  {
+    if (m_size)
+    {
+      eeprom_read_block(Data(), (const void *)m_addr, m_size);
+    }
+  }
+  
+  
+  //------------------------------------------------------------------------
+  // Retrieve after checking signature
+public:
   void Retrieve()
   {
-    eeprom_read_block(Data(), (const void *)m_addr, m_size);
+    if (signature)
+    {
+      _Retrieve();
+    }
   }
   
+  
+  //------------------------------------------------------------------------
+  // Verify if the value in the item matches the value stored in EEPROM
+  //
+  // Protected because there's no check if the list is finalized
+protected:
+  bool _Verify()
+  {
+    // An item without size is always marked as non-matching
+    // This is needed because items that were created after the list was
+    // finalized, get their size set to 0. By returning false here, the
+    // program can recognize that an item is not stored in the EEPROM at
+    // all, for whatever reason.
+    return (m_size ? 
+      eeprom_verify_block(Data(), (void *)m_addr, m_size) 
+      : false);
+  }
+
+  
+  //------------------------------------------------------------------------
+  // Verify after checking signature
+public:
   bool Verify()
   {
-    bool result = true;
-    const byte *p = (const byte *)Data();
-    const byte *e = (const byte *)m_addr;
-    
-    for (size_t n = 0; n < m_size; n++, e++)
-    {
-      if (eeprom_read_byte(e) != *p)
-      {
-        result = false;
-        break;
-      }
-    }
-    
-    return result;
+    return (signature ? _Verify() : false);
   }
-
-
+  
+  
   //------------------------------------------------------------------------
-  // EEPROM operations for all items
-  // These should be called as EEPROM_mgr::functionname();
+  // Static helper function to check the signature in the EEPROM matches
 public:
-  static void StoreAll()
+  bool                                  // Returns true if EEPROM sig valid
+  static VerifySignature(void)
   {
-    for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
-    {
-      cur->Store();
-    }
+    // If the list hasn't been finalized yet, the result is always false.
+    return (signature ? 
+      eeprom_verify_block(&signature, (void *)nextaddr, sizeof(signature))
+      : false);
   }
   
-  static void RetrieveAll()
-  {
-    for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
-    {
-      cur->Retrieve();
-    }
-  }
   
-  static void VerifyAll()
-  {
-    for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
-    {
-      cur->Verify();
-    }
-  }
+  //------------------------------------------------------------------------
+  // Static function to save all values and write the signature
+public:
+  static void StoreAll();
+  
+  
+  //------------------------------------------------------------------------
+  // Retrieve all values but only if the signature is correct
+public:
+  static bool                           // Returns true if values retrieved
+  RetrieveAll();
+  
+  
+  //------------------------------------------------------------------------
+  // Verify that all values in the EEPROM are equal to the stored values
+public:
+  static bool                           // Returns true if all values match
+  VerifyAll();
+  
+  
+  //------------------------------------------------------------------------
+  // This should be called at the beginning of your sketch
+  //
+  // This finalizes the list of items: no more items can be declared.
+  // Since all items should be statically declared, this shouldn't be a
+  // problem anyway.
+  //
+  // It also either (A) retrieves all items from the EEPROM if the signature
+  // in the EEPROM matches the signature generated from the list of items,
+  // or (B) stores all the current (default) values, and the new signature
+  // in the EEPROM and clears the rest of the EEPROM.
+  //
+  // You can override this behavior via the parameters:
+  // - If you want to leave the EEPROM alone if the signature is not there,
+  //   you can override the first parameter. This can be used if your app
+  //   has to work together with other applications that use the EEPROM,
+  //   and you have code in your application that somehow decides which
+  //   application has control over what goes into the EEPROM.
+  // - If you always want to overwrite the EEPROM with the default values
+  //   even if the signature is found, you can use the second parameter.
+  //   This may be useful during debugging, when you change the default
+  //   values but not the sizes, and you want to make sure that the new 
+  //   values get written
+  // - If you don't want to clear the unused part of the EEPROM, you can
+  //   use the third parameter. This can be useful if you're using multiple
+  //   applications or when you're storing data into the EEPROM yourself.
+  // - If you only want to calculate the signature and check if the EEPROM
+  //   has a valid signature, use the fourth parameter.
+  //    
+  // The return value indicates whether the EEPROM has a valid signature.
+public:
+  static bool 
+  Begin(
+    bool storeifinvalid = true,
+	  bool storealways = false,
+    bool wipeunusedareas = true,
+    bool retrieveifvalid = true);
 };
 
 
@@ -213,18 +272,16 @@ public:
 // somewhat problematic when the same EEPROM locations are needed by
 // multiple sketches, but this can be alleviated by declaring all the items
 // in one library and including that library by all sketches that need it.
-// The library doesn't check that the values are retrieved from the correct
-// locations; in other words, you will get invalid data if you store the
-// values with a sketch that has the items declared in one way, and 
-// retrieve them in a sketch that has the declarations in a different
-// order or uses different variable types.
 template <class T> class EEPROM_item : public EEPROM_mgr
 {
-  // The member that stores the actual data
+  //------------------------------------------------------------------------
+  // Member variables
 protected:
-  T m_data;
+  T                 m_data;             // The actual data being stored
 
-  // Constructor/Destructor
+  
+  //------------------------------------------------------------------------
+  // Constructor
 public:
   EEPROM_item()
   : EEPROM_mgr(sizeof(T))
@@ -232,12 +289,18 @@ public:
   {
   }
   
+  
+  //------------------------------------------------------------------------
+  // Destructor
+public:
   EEPROM_item(const T& defaultvalue)
   : EEPROM_mgr(sizeof(T))
   , m_data(defaultvalue)
   {
   }
 
+  
+  //------------------------------------------------------------------------
   // Virtual function that provides access to the data
 public:
   virtual void *Data()
@@ -245,13 +308,21 @@ public:
     return &m_data;
   }
 
-  // Functions for read and write access in the program
+
+  //------------------------------------------------------------------------
+  // Data can be accessed by casting to the type
+  //
+  // Note, updating the data doesn't automatically write it to EEPROM
 public:
   operator T&()
   {
     return m_data;
   }
   
+  
+  //------------------------------------------------------------------------
+  // The Assignment operator updates the EEPROM automatically
+public:
   const T& operator=(const T& src)
   {
     if (m_data != src)
@@ -259,6 +330,12 @@ public:
       m_data = src;
       Store();
     }
+    
     return m_data;
   }
 };
+
+
+////////////////////////////////////////////////////////////////////////////
+// END
+////////////////////////////////////////////////////////////////////////////
