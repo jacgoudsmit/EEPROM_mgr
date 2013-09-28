@@ -6,12 +6,84 @@
   http://github.com/jacgoudsmit/EEPROM_mgr
 */
 
+// Uncomment this to disable actual EEPROM reading/writing and generate some
+// debug output instead
+#define EEPROM_mgr_FAKE
+
+
+/////////////////////////////////////////////////////////////////////////////
+// INCLUDES
+/////////////////////////////////////////////////////////////////////////////
+
+
 #include <Arduino.h>
+
+#ifndef EEPROM_mgr_FAKE
+#include <avr/eeprom.h>
+#endif
 
 #include "EEPROM_mgr.h"
 
 
-//--------------------------------------------------------------------------
+/////////////////////////////////////////////////////////////////////////////
+// CODE
+/////////////////////////////////////////////////////////////////////////////
+
+
+//---------------------------------------------------------------------------
+// Functions for Fake mode
+#ifdef EEPROM_mgr_FAKE
+void eeprom_write_block(const void *src, void *dst, size_t len)
+{
+  Serial.print(F("*** eeprom_write_block src="));
+  Serial.print((int)src, HEX);
+  Serial.print(F(" dst="));
+  Serial.print((int)dst, HEX);
+  Serial.print(F(" len="));
+  Serial.print(len);
+  Serial.println();
+}
+
+
+void eeprom_write_byte(void *dst, byte b)
+{
+  Serial.print(F("*** eeprom_write_byte dst="));
+  Serial.print((int)dst, HEX);
+  Serial.print(F(" b="));
+  Serial.print(b);
+  Serial.println();
+}
+
+
+void eeprom_read_block(void *dst, const void *src, size_t len)
+{
+  Serial.print(F("*** eeprom_read_block dst="));
+  Serial.print((int)dst, HEX);
+  Serial.print(F(" src="));
+  Serial.print((int)src, HEX);
+  Serial.print(F(" len="));
+  Serial.print(len);
+  Serial.println();
+}
+
+
+byte eeprom_read_byte(const byte *src)
+{
+  byte result = 0xFF;
+
+  Serial.print(F("*** eeprom_read_byte src="));
+  Serial.print((int)src, HEX);
+
+  Serial.print(F(" result="));
+  Serial.print(result);
+  Serial.println();
+
+  return result;
+}
+#endif
+
+
+//---------------------------------------------------------------------------
 // Implementation for the "missing" EEPROM function
 bool                                    // Returns true if all data matches
 eeprom_verify_block(
@@ -23,9 +95,10 @@ eeprom_verify_block(
   const byte *p = (const byte *)ram_data;
   const byte *e = (const byte *)eeprom_data;
       
-  for (size_t n = 0; n < size; n++, e++)
+  for (size_t n = 0; n < size; n++, p++, e++)
   {
-    if (eeprom_read_byte(e) != *p)
+    byte b = eeprom_read_byte(e);
+    if (b != *p)
     {
       result = false;
       break;
@@ -36,19 +109,19 @@ eeprom_verify_block(
 }
 
 
-////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 // Base class for EEPROM items
-////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 
 
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Static data for the EEPROM_mgr class
-word                EEPROM_mgr::nextaddr;
-EEPROM_mgr         *EEPROM_mgr::list;
+byte               *EEPROM_mgr::nextaddr = 0;
+EEPROM_mgr         *EEPROM_mgr::list = 0;
 word                EEPROM_mgr::signature;
 
 
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Constructor
 EEPROM_mgr::EEPROM_mgr(
   size_t size)                          // Size for data required by item
@@ -71,13 +144,13 @@ EEPROM_mgr::EEPROM_mgr(
 }
   
 
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Destructor
 EEPROM_mgr::~EEPROM_mgr()
 {
   // Normally this should never be called but this code will clean
   // everything up nicely.
-  
+
   // If this instance is not in the list because either the list was
   // already finalized when the item was created, or because the requested
   // size was zero, skip the code that removes the item from the list.
@@ -107,11 +180,75 @@ EEPROM_mgr::~EEPROM_mgr()
   }
 }
 
-  
-//--------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// Store the item into the EEPROM
+void
+EEPROM_mgr::_Store()
+{
+  if (m_size)
+  {
+    eeprom_write_block(Data(), m_addr, m_size); 
+  }
+}
+
+
+//---------------------------------------------------------------------------
+// Retrieve the item from the EEPROM
+void
+EEPROM_mgr::_Retrieve()
+{
+  if (m_size)
+  {
+    eeprom_read_block(Data(), (const void *)m_addr, m_size);
+  }
+}
+
+
+//---------------------------------------------------------------------------
+// Verify if the value in the item matches the value stored in EEPROM
+bool
+EEPROM_mgr::_Verify()
+{
+  bool result = false;
+
+  // An item without size is always marked as non-matching
+  // This is needed because items that were created after the list was
+  // finalized, get their size set to 0. By returning false here, the
+  // program can recognize that an item is not stored in the EEPROM at
+  // all, for whatever reason.
+  if (m_size)
+  {
+    result = eeprom_verify_block(Data(), (void *)m_addr, m_size);
+  }
+
+  return result;
+}
+
+
+//---------------------------------------------------------------------------
+// Static helper function to check the signature in the EEPROM matches
+bool                                    // Returns true if EEPROM sig valid
+EEPROM_mgr::VerifySignature(void)
+{
+  // If the list hasn't been finalized yet, the result is always false.
+  bool result = false;
+
+  if (signature)
+  {
+    result = eeprom_verify_block(&signature, (void *)nextaddr, 
+      sizeof(signature));
+  }
+
+  return result;
+}
+
+
+//---------------------------------------------------------------------------
 // Static function to save all values and write the signature
 void
-EEPROM_mgr::StoreAll()
+EEPROM_mgr::StoreAll(
+  bool forcewritesig /* = false */)
 {
   // Don't write to EEPROM if there are no items or if list not finalized
   if ((nextaddr) && (signature))
@@ -122,7 +259,7 @@ EEPROM_mgr::StoreAll()
     }
 
     // Don't write the signature if it's already there, to reduce wear
-    if (!VerifySignature())      
+    if ((forcewritesig) || (!VerifySignature()))
     {
       eeprom_write_block(&signature, (void *)nextaddr, sizeof(signature));
     }
@@ -130,7 +267,7 @@ EEPROM_mgr::StoreAll()
 }
   
   
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Retrieve all values but only if the signature is correct
 bool                                    // Returns true if values retrieved
 EEPROM_mgr::RetrieveAll()
@@ -156,14 +293,16 @@ EEPROM_mgr::RetrieveAll()
 }
 
   
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // Verify that all values in the EEPROM are equal to the stored values
 bool                                    // Returns true if all values match
 EEPROM_mgr::VerifyAll()
 {
   // If the signature doesn't match, all bets are off.
-  bool result = VerifySignature();
-  
+  bool result;
+
+  result = VerifySignature();
+
   if (result)
   {
     for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
@@ -180,7 +319,7 @@ EEPROM_mgr::VerifyAll()
 }
   
   
-//--------------------------------------------------------------------------
+//---------------------------------------------------------------------------
 // This should be called at the beginning of your sketch
 bool 
 EEPROM_mgr::Begin(
@@ -190,12 +329,12 @@ EEPROM_mgr::Begin(
   bool retrieveifvalid)
 {
   bool result = false;
-  
+
   // Calculate the signature.
   // Start by resetting it, to make it possible to call this function more
   // than once.
   signature = 0;
-  
+
   for (EEPROM_mgr *cur = list; cur; cur = cur->m_next)
   {
     signature = ((signature << 1) ^ cur->m_size) ^ (!(signature & 0x8000));
@@ -215,8 +354,10 @@ EEPROM_mgr::Begin(
 
     if ((storealways) || ((!result) && (storeifinvalid)))
     {
-      StoreAll();
-      
+      // Write everything including the signature
+      // Don't bother verifying the signature, just write it
+      StoreAll(true);
+
       if (wipeunusedareas)
       {
         for (byte *u = (byte *)nextaddr + sizeof(signature); 
@@ -234,11 +375,11 @@ EEPROM_mgr::Begin(
       RetrieveAll();
     }
   }
-  
+
   return result;
 }
 
 
-////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////
 // END
-////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////

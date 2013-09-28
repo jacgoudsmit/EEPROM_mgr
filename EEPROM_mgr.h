@@ -44,8 +44,8 @@
 */
 
 
-#include <arduino.h>
-#include <avr/eeprom.h>
+#ifndef EEPROM_MGR_H
+#define EEPROM_MGR_H
 
 
 //--------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class EEPROM_mgr
   //------------------------------------------------------------------------
   // Static variables
 protected:
-  static word       nextaddr;           // Next address in EEPROM
+  static byte      *nextaddr;           // Next address in EEPROM
   static EEPROM_mgr *list;              // List of items with nonzero size
   static word       signature;          // non-zero=list is finalized
 
@@ -78,7 +78,7 @@ protected:
   // Member variables
 protected:
   EEPROM_mgr       *m_next;             // Next link in linked list
-  word              m_addr;             // NOTE: 0 is valid EEPROM address!
+  byte             *m_addr;             // NOTE: 0 is valid EEPROM address!
   size_t            m_size;             // Size of data; 0=don't use EEPROM
 
   
@@ -113,13 +113,7 @@ public:
   //
   // Protected because there's no check if the list is finalized
 protected:
-  void _Store()
-  {
-    if (m_size)
-    {
-      eeprom_write_block(Data(), (void *)m_addr, m_size); 
-    }
-  }
+  void _Store();
   
   
   //------------------------------------------------------------------------
@@ -139,13 +133,7 @@ public:
   //
   // Protected because there's no check if the list is finalized
 protected:
-  void _Retrieve()
-  {
-    if (m_size)
-    {
-      eeprom_read_block(Data(), (const void *)m_addr, m_size);
-    }
-  }
+  void _Retrieve();
   
   
   //------------------------------------------------------------------------
@@ -165,17 +153,7 @@ public:
   //
   // Protected because there's no check if the list is finalized
 protected:
-  bool _Verify()
-  {
-    // An item without size is always marked as non-matching
-    // This is needed because items that were created after the list was
-    // finalized, get their size set to 0. By returning false here, the
-    // program can recognize that an item is not stored in the EEPROM at
-    // all, for whatever reason.
-    return (m_size ? 
-      eeprom_verify_block(Data(), (void *)m_addr, m_size) 
-      : false);
-  }
+  bool _Verify();
 
   
   //------------------------------------------------------------------------
@@ -183,7 +161,14 @@ protected:
 public:
   bool Verify()
   {
-    return (signature ? _Verify() : false);
+    bool result = false;
+
+    if (signature)
+    {
+      result = _Verify();
+    }
+
+    return result;
   }
   
   
@@ -191,19 +176,14 @@ public:
   // Static helper function to check the signature in the EEPROM matches
 public:
   bool                                  // Returns true if EEPROM sig valid
-  static VerifySignature(void)
-  {
-    // If the list hasn't been finalized yet, the result is always false.
-    return (signature ? 
-      eeprom_verify_block(&signature, (void *)nextaddr, sizeof(signature))
-      : false);
-  }
+  static VerifySignature(void);
   
   
   //------------------------------------------------------------------------
   // Static function to save all values and write the signature
 public:
-  static void StoreAll();
+  static void StoreAll(
+    bool forcewritesig = false);
   
   
   //------------------------------------------------------------------------
@@ -254,7 +234,7 @@ public:
   static bool 
   Begin(
     bool storeifinvalid = true,
-	  bool storealways = false,
+    bool storealways = false,
     bool wipeunusedareas = true,
     bool retrieveifvalid = true);
 };
@@ -276,7 +256,7 @@ template <class T> class EEPROM_item : public EEPROM_mgr
 {
   //------------------------------------------------------------------------
   // Member variables
-protected:
+public:
   T                 m_data;             // The actual data being stored
 
   
@@ -307,35 +287,11 @@ public:
   {
     return &m_data;
   }
-
-
-  //------------------------------------------------------------------------
-  // Data can be accessed by casting to the type
-  //
-  // Note, updating the data doesn't automatically write it to EEPROM
-public:
-  operator T&()
-  {
-    return m_data;
-  }
-  
-  
-  //------------------------------------------------------------------------
-  // The Assignment operator updates the EEPROM automatically
-public:
-  const T& operator=(const T& src)
-  {
-    if (m_data != src)
-    {
-      m_data = src;
-      Store();
-    }
-    
-    return m_data;
-  }
 };
 
 
 ////////////////////////////////////////////////////////////////////////////
 // END
 ////////////////////////////////////////////////////////////////////////////
+
+#endif
