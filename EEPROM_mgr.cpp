@@ -8,7 +8,7 @@
 
 // Uncomment this to disable actual EEPROM reading/writing and generate some
 // debug output instead
-#define EEPROM_mgr_FAKE
+//#define EEPROM_mgr_FAKE
 
 
 /////////////////////////////////////////////////////////////////////////////

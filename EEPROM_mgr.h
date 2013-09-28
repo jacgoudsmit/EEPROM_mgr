@@ -47,6 +47,8 @@
 #ifndef EEPROM_MGR_H
 #define EEPROM_MGR_H
 
+#include <Arduino.h>
+
 
 //--------------------------------------------------------------------------
 // Implementation for the "missing" EEPROM function
