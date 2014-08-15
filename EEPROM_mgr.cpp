@@ -162,7 +162,7 @@ EEPROM_mgr::~EEPROM_mgr()
     {
       list = m_next;
     }
-    else
+    else if (list) // list should never be NULL but no harm in testing.
     {
       for (EEPROM_mgr *cur = list; cur->m_next; cur = cur->m_next)
       {
@@ -298,9 +298,9 @@ EEPROM_mgr::RetrieveAll()
 bool                                    // Returns true if all values match
 EEPROM_mgr::VerifyAll()
 {
-  // If the signature doesn't match, all bets are off.
   bool result;
 
+  // If the signature doesn't match, all bets are off.
   result = VerifySignature();
 
   if (result)
@@ -347,14 +347,16 @@ EEPROM_mgr::Begin(
     }
   }
 
-  // If the list was empty, signature will still be 0 at this time.
+  // If (and only if) the list was empty, signature will still be 0 at this
+  // time, and we should simply return 0 to indicate there was no signature
+  // in the EEPROM. Otherwise, store or retrieve the items in the list.
   if (signature)
   {
     result = VerifySignature();
 
     if ((storealways) || ((!result) && (storeifinvalid)))
     {
-      // Write everything including the signature
+      // Write default values including the signature
       // Don't bother verifying the signature, just write it
       StoreAll(true);
 
